@@ -19,8 +19,10 @@ current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
+from typing import Dict, List
+
 # In-memory activity database
-activities = {
+activities: Dict[str, Dict] = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
@@ -83,9 +85,39 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+
 @app.get("/activities")
 def get_activities():
     return activities
+
+
+# NOVO: Estatísticas gerais das atividades
+@app.get("/activities/statistics")
+def get_activities_statistics():
+    stats = {}
+    for name, data in activities.items():
+        stats[name] = {
+            "max_participants": data["max_participants"],
+            "current_participants": len(data["participants"]),
+            "vacancies": data["max_participants"] - len(data["participants"]),
+        }
+    return stats
+
+
+# NOVO: Histórico de participação por atividade
+@app.get("/activities/{activity_name}/history")
+def get_activity_history(activity_name: str):
+    if activity_name not in activities:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    activity = activities[activity_name]
+    return {
+        "activity": activity_name,
+        "participants": activity["participants"],
+        "max_participants": activity["max_participants"],
+        "vacancies": activity["max_participants"] - len(activity["participants"]),
+        "description": activity["description"],
+        "schedule": activity["schedule"]
+    }
 
 
 @app.post("/activities/{activity_name}/signup")
