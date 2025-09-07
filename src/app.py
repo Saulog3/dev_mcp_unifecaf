@@ -19,65 +19,18 @@ current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
-from typing import Dict, List
 
-# In-memory activity database
-activities: Dict[str, Dict] = {
-    "Chess Club": {
-        "description": "Learn strategies and compete in chess tournaments",
-        "schedule": "Fridays, 3:30 PM - 5:00 PM",
-        "max_participants": 12,
-        "participants": ["michael@mergington.edu", "daniel@mergington.edu"]
-    },
-    "Programming Class": {
-        "description": "Learn programming fundamentals and build software projects",
-        "schedule": "Tuesdays and Thursdays, 3:30 PM - 4:30 PM",
-        "max_participants": 20,
-        "participants": ["emma@mergington.edu", "sophia@mergington.edu"]
-    },
-    "Gym Class": {
-        "description": "Physical education and sports activities",
-        "schedule": "Mondays, Wednesdays, Fridays, 2:00 PM - 3:00 PM",
-        "max_participants": 30,
-        "participants": ["john@mergington.edu", "olivia@mergington.edu"]
-    },
-    "Soccer Team": {
-        "description": "Join the school soccer team and compete in matches",
-        "schedule": "Tuesdays and Thursdays, 4:00 PM - 5:30 PM",
-        "max_participants": 22,
-        "participants": ["liam@mergington.edu", "noah@mergington.edu"]
-    },
-    "Basketball Team": {
-        "description": "Practice and play basketball with the school team",
-        "schedule": "Wednesdays and Fridays, 3:30 PM - 5:00 PM",
-        "max_participants": 15,
-        "participants": ["ava@mergington.edu", "mia@mergington.edu"]
-    },
-    "Art Club": {
-        "description": "Explore your creativity through painting and drawing",
-        "schedule": "Thursdays, 3:30 PM - 5:00 PM",
-        "max_participants": 15,
-        "participants": ["amelia@mergington.edu", "harper@mergington.edu"]
-    },
-    "Drama Club": {
-        "description": "Act, direct, and produce plays and performances",
-        "schedule": "Mondays and Wednesdays, 4:00 PM - 5:30 PM",
-        "max_participants": 20,
-        "participants": ["ella@mergington.edu", "scarlett@mergington.edu"]
-    },
-    "Math Club": {
-        "description": "Solve challenging problems and participate in math competitions",
-        "schedule": "Tuesdays, 3:30 PM - 4:30 PM",
-        "max_participants": 10,
-        "participants": ["james@mergington.edu", "benjamin@mergington.edu"]
-    },
-    "Debate Team": {
-        "description": "Develop public speaking and argumentation skills",
-        "schedule": "Fridays, 4:00 PM - 5:30 PM",
-        "max_participants": 12,
-        "participants": ["charlotte@mergington.edu", "henry@mergington.edu"]
-    }
-}
+# Banco de dados
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from src.models import Base, Activity, Student
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Cria as tabelas se não existirem
+Base.metadata.create_all(bind=engine)
 
 
 @app.get("/")
@@ -86,79 +39,105 @@ def root():
 
 
 
+
 @app.get("/activities")
 def get_activities():
-    return activities
+    session = SessionLocal()
+    activities = session.query(Activity).all()
+    result = {}
+    for activity in activities:
+        result[activity.name] = {
+            "description": activity.description,
+            "schedule": activity.schedule,
+            "max_participants": activity.max_participants,
+            "participants": [student.email for student in activity.participants]
+        }
+    session.close()
+    return result
 
 
 # NOVO: Estatísticas gerais das atividades
+
 @app.get("/activities/statistics")
 def get_activities_statistics():
+    session = SessionLocal()
+    activities = session.query(Activity).all()
     stats = {}
-    for name, data in activities.items():
-        stats[name] = {
-            "max_participants": data["max_participants"],
-            "current_participants": len(data["participants"]),
-            "vacancies": data["max_participants"] - len(data["participants"]),
+    for activity in activities:
+        stats[activity.name] = {
+            "max_participants": activity.max_participants,
+            "current_participants": len(activity.participants),
+            "vacancies": activity.max_participants - len(activity.participants),
         }
+    session.close()
     return stats
 
 
 # NOVO: Histórico de participação por atividade
+
 @app.get("/activities/{activity_name}/history")
 def get_activity_history(activity_name: str):
-    if activity_name not in activities:
+    session = SessionLocal()
+    activity = session.query(Activity).filter_by(name=activity_name).first()
+    if not activity:
+        session.close()
         raise HTTPException(status_code=404, detail="Activity not found")
-    activity = activities[activity_name]
-    return {
-        "activity": activity_name,
-        "participants": activity["participants"],
-        "max_participants": activity["max_participants"],
-        "vacancies": activity["max_participants"] - len(activity["participants"]),
-        "description": activity["description"],
-        "schedule": activity["schedule"]
+    result = {
+        "activity": activity.name,
+        "participants": [student.email for student in activity.participants],
+        "max_participants": activity.max_participants,
+        "vacancies": activity.max_participants - len(activity.participants),
+        "description": activity.description,
+        "schedule": activity.schedule
     }
+    session.close()
+    return result
+
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
+def signup_for_activity(activity_name: str, email: str, name: str = None, grade_level: str = None):
+    session = SessionLocal()
+    activity = session.query(Activity).filter_by(name=activity_name).first()
+    if not activity:
+        session.close()
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get the specific activity
-    activity = activities[activity_name]
+    student = session.query(Student).filter_by(email=email).first()
+    if not student:
+        if not name or not grade_level:
+            session.close()
+            raise HTTPException(status_code=400, detail="Student not found. Provide name and grade_level to register.")
+        student = Student(name=name, email=email, grade_level=grade_level)
+        session.add(student)
+        session.commit()
+        session.refresh(student)
 
-    # Validate student is not already signed up
-    if email in activity["participants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Student is already signed up"
-        )
+    if student in activity.participants:
+        session.close()
+        raise HTTPException(status_code=400, detail="Student is already signed up")
 
-    # Add student
-    activity["participants"].append(email)
+    activity.participants.append(student)
+    session.commit()
+    session.close()
     return {"message": f"Signed up {email} for {activity_name}"}
+
 
 
 @app.delete("/activities/{activity_name}/unregister")
 def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
+    session = SessionLocal()
+    activity = session.query(Activity).filter_by(name=activity_name).first()
+    if not activity:
+        session.close()
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get the specific activity
-    activity = activities[activity_name]
+    student = session.query(Student).filter_by(email=email).first()
+    if not student or student not in activity.participants:
+        session.close()
+        raise HTTPException(status_code=400, detail="Student is not signed up for this activity")
 
-    # Validate student is signed up
-    if email not in activity["participants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Student is not signed up for this activity"
-        )
-
-    # Remove student
-    activity["participants"].remove(email)
+    activity.participants.remove(student)
+    session.commit()
+    session.close()
     return {"message": f"Unregistered {email} from {activity_name}"}
